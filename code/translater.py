@@ -8,7 +8,6 @@ import jieba
 import pickle
 from tqdm import tqdm
 
-
 train_file = "./data/train-set.data"
 valid_file = "./data/validation-set.data"
 new_train_file = "./data/train.pkl"
