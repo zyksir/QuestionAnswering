@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 #-*- coding: utf-8 -*-
 
+import torch
+import pickle
 import random
 from collections import defaultdict
 from torch.utils.data import Dataset
@@ -17,7 +19,7 @@ def transform_data(filename):
 class TrainDataset(Dataset):
     def __init__(self, filename, negative_sample_size, mode="WeightedLoss"):
         super(TrainDataset, self).__init__()
-        self.pos, self.q2neg = self.get_train_data(filename)
+        self.pos, self.q2pos_num, self.q2neg = self.get_train_data(filename)
         self.len = len(self.pos)
         self.mode = mode
         self.negative_sample_size = negative_sample_size
@@ -34,23 +36,29 @@ class TrainDataset(Dataset):
             question: [seq_size]
             pos_answer: [seq_size]
             neg_answer: [negative_sample_size, seq_size]
+            subsampling_weight
         '''
         positive_sample = self.pos[idx]
-        question, answer = positive_sample
-        negative_answer_candidate = self.q2neg[question]
-        negative_sample_list = random.sample(negative_answer_candidate, self.negative_sample_size)
+        question, positive_answer = positive_sample
+        negative_answer_candidate = random.sample(self.q2neg[question], self.negative_sample_size)
+        subsampling_weight = len(self.q2neg[question]) / self.q2pos_num[question]
+        return question, positive_answer, negative_answer_candidate, subsampling_weight
 
+    @staticmethod
+    def collate_fn(data):
+        return None
 
     @staticmethod
     def get_train_data(filename):
+        all_triples = pickle.load(open(filename))
         q_pos = []
         q2neg = defaultdict(lambda: [])
-        with open(filename, "r") as f:
-            for line in f:
-                line = line.strip().split("\t")
-                if line[2] == "0":
-                    q2neg[line[0]].append(line[1])
-                else:
-                    q_pos.append((line[0], line[1]))
+        q2pos_num = defaultdict(lambda: 0)
+        for line in all_triples:
+            if line[2] == "0":
+                q2neg[line[0]].append(line[1])
+            else:
+                q_pos.append((line[0], line[1]))
+                q2pos_num[line[0]] += 1
 
-        return q_pos, q2neg
+        return q_pos, q2pos_num, q2neg
