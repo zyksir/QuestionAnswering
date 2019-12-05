@@ -11,47 +11,6 @@ PAD_INDEX = 0
 START_INDEX = 1
 END_INDEX = 2
 
-# class TrainDataset(Dataset):
-#     def __init__(self, filename):
-#         super(TrainDataset, self).__init__()
-#         self.triples = pickle.load(open(filename, "rb"))
-#         self.len = len(self.triples)
-#         self.seq_size = 0
-#
-#     def __len__(self):
-#         return self.len
-#
-#     def __getitem__(self, idx):
-#         '''
-#         :param idx:
-#         :return:
-#             question: [seq_size]
-#             pos_answer: [seq_size]
-#             label: 1 or 0
-#         '''
-#         question, positive_answer, label = self.triples[idx]
-#         return question, positive_answer, label
-#
-#     @staticmethod
-#     def collate_fn(data):
-#         que_len, ans_len = 0, 0
-#         batch_size = len(data)
-#         for q, a, _ in data:
-#             que_len = max(que_len, len(q))
-#             ans_len = max(ans_len, len(a))
-#         question = torch.LongTensor(batch_size, que_len).fill_(PAD_INDEX)
-#         answer = torch.LongTensor(batch_size, ans_len).fill_(PAD_INDEX)
-#         question_length = torch.LongTensor(batch_size).fill_(1)
-#         answer_length = torch.LongTensor(batch_size).fill_(1)
-#         label = []
-#         for i, (q, a, l) in enumerate(data):
-#             question[i, 0:len(q)] = torch.LongTensor(q)
-#             answer[i, 0:len(a)] = torch.LongTensor(a)
-#             question_length[i] = len(q)
-#             answer_length[i] = len(a)
-#             label.append(l)
-#         return question, question_length, answer, answer_length, torch.LongTensor(label)
-
 class TrainDataset(Dataset):
     def __init__(self, filename, negative_sample_size, if_pos=True):
         super(TrainDataset, self).__init__()
@@ -121,6 +80,47 @@ class TrainDataset(Dataset):
             else:
                 neg.append((line[0], line[1]))
         return pos, neg
+
+# class TestDataset(Dataset):
+#     def __init__(self, filename):
+#         super(TestDataset, self).__init__()
+#         self.triples = pickle.load(open(filename, "rb"))
+#         self.len = len(self.triples)
+#         self.seq_size = 0
+#
+#     def __len__(self):
+#         return self.len
+#
+#     def __getitem__(self, idx):
+#         '''
+#         :param idx:
+#         :return:
+#             question: [seq_size]
+#             pos_answer: [seq_size]
+#             label: 1 or 0
+#         '''
+#         question, positive_answer, label = self.triples[idx]
+#         return question, positive_answer, label
+#
+#     @staticmethod
+#     def collate_fn(data):
+#         que_len, ans_len = 0, 0
+#         batch_size = len(data)
+#         for q, a, _ in data:
+#             que_len = max(que_len, len(q))
+#             ans_len = max(ans_len, len(a))
+#         question = torch.LongTensor(batch_size, que_len).fill_(PAD_INDEX)
+#         answer = torch.LongTensor(batch_size, ans_len).fill_(PAD_INDEX)
+#         question_length = torch.LongTensor(batch_size).fill_(1)
+#         answer_length = torch.LongTensor(batch_size).fill_(1)
+#         label = []
+#         for i, (q, a, l) in enumerate(data):
+#             question[i, 0:len(q)] = torch.LongTensor(q)
+#             answer[i, 0:len(a)] = torch.LongTensor(a)
+#             question_length[i] = len(q)
+#             answer_length[i] = len(a)
+#             label.append(l)
+#         return question, question_length, answer, answer_length, torch.LongTensor(label)
 
 class TestDataset(Dataset):
     def __init__(self, filename):

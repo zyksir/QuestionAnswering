@@ -14,17 +14,23 @@ from dataloader import TrainDataset, TestDataset
 
 torch.set_num_threads(8)
 
+def log_metrics(epoch, metrics):
+    for metric in metrics:
+        logging.info('%s at epoch %d: %f' % (metric, epoch, metrics[metric]))
+
 def parse_args(args=None):
     parser = argparse.ArgumentParser(
         description='Training and Testing QuestionAnswering Models',
         usage='train.py [<args>] [-h | --help]'
     )
+    parser.add_argument('--adv_temperature', type=int, default=10)
+    parser.add_argument('--margin', type=float, default=0.75)
     parser.add_argument('--class_weights', type=str, default="[0.1, 1]")
     parser.add_argument('--word2id', type=str, default="./data/word2id.pkl")
     parser.add_argument('--id2word', type=str, default="./data/id2word.pkl")
     parser.add_argument('--train_file', type=str, default="./data/train.pkl")
     parser.add_argument('--valid_file', type=str, default="./data/valid.pkl")
-    parser.add_argument('--negative_sample_size', type=int, default=1)
+    parser.add_argument('--negative_sample_size', type=int, default=None)
     parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('-cpu', '--cpu_num', default=10, type=int)
     parser.add_argument('--mode', type=str, default="UpSampling")
@@ -86,7 +92,7 @@ def main(args):
                                   num_workers=max(1, args.cpu_num // 2), collate_fn=TrainDataset.collate_fn)
 
     valid_dataset = TestDataset(args.valid_file)
-    valid_dataloader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=True,
+    valid_dataloader = DataLoader(valid_dataset, batch_size=1, shuffle=True,
                                   num_workers=max(1, args.cpu_num // 2), collate_fn=TestDataset.collate_fn)
 
     #### build model
@@ -98,19 +104,26 @@ def main(args):
 
     num_steps = len(train_dataloader) * args.num_epochs
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=0.01)
-    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_steps)
+    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, num_steps // 2, gamma=0.1)
     warmup_scheduler = None # warmup.UntunedLinearWarmup(optimizer)
     if args.cuda:
         model = model.cuda()
 
+    embed()
     #### begin training
     logging.info("begin training:")
+    best_model, best_MRR = None, 0
     for epoch in range(args.num_epochs):
         model.do_train(model, optimizer, train_dataloader, args, lr_scheduler, warmup_scheduler)
         # model.do_train(model, optimizer, train_dataloader_neg, args)
         if epoch % model.config.valid_epochs == 0:
-            log = model.do_valid(model, valid_dataloader, args)
-            logging.info(log)
+            metric = model.do_valid(model, valid_dataloader, args)
+            log_metrics(epoch, metric)
+            if metric["MRR"] > best_MRR:
+                best_model = model.state_dict()
+                best_MRR = metric["MRR"]
+    torch.save(best_model, os.path.join(args.save_path, "best.pt"))
+
 
 
 if __name__ == '__main__':

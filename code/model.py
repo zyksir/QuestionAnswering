@@ -14,7 +14,7 @@ def inverse_sigmoid(score):
     return -torch.log(1/(score+1e-7) - 1)
 
 class MarginLoss(nn.Module):
-    def __init__(self, adv_temperature=None, margin=0.1):
+    def __init__(self, adv_temperature=None, margin=0.75):
         super(MarginLoss, self).__init__()
         self.margin = nn.Parameter(torch.Tensor([margin]))
         self.margin.requires_grad = False
@@ -26,7 +26,7 @@ class MarginLoss(nn.Module):
             self.adv_flag = False
 
     def get_weights(self, n_score):
-        return F.softmax(-n_score * self.adv_temperature, dim=-1).detach()
+        return F.softmax(n_score * self.adv_temperature, dim=-1).detach()
 
     def forward(self, p_score, n_score):
         if self.adv_flag:
@@ -44,11 +44,11 @@ class BaseModel(nn.Module):
         super(BaseModel, self).__init__()
         self.config = args
         self.embedding = nn.Embedding(args.word_num, args.embed_dim)
-        class_weights = torch.FloatTensor(eval(args.class_weights))
-        if args.cuda:
-            class_weights = class_weights.cuda()
+        # class_weights = torch.FloatTensor(eval(args.class_weights))
+        # if args.cuda:
+        #     class_weights = class_weights.cuda()
         # self.loss_func = nn.CrossEntropyLoss(weight=class_weights)
-        self.loss_func = MarginLoss()
+        self.loss_func = MarginLoss(args.adv_temperature, margin=args.margin)
 
     def forward(self, question, answer, question_length, answer_length):
         '''
@@ -134,11 +134,11 @@ class BaseModel(nn.Module):
     #             log_loss = 0
 
     @staticmethod
-    def do_valid(model, vaild_dataloader, args):
+    def do_valid(model, valid_dataloader, args):
         model.eval()
         with torch.no_grad():
             all_score, all_label, APlist, RRlist, log = [], [], [], [], {}
-            for question, question_length, positive_answer, positive_answer_length, negative_answer, negative_answer_length in vaild_dataloader:
+            for question, question_length, positive_answer, positive_answer_length, negative_answer, negative_answer_length in valid_dataloader:
                 score_label = []
                 if args.cuda:
                     question = question.cuda()
@@ -171,6 +171,8 @@ class BaseModel(nn.Module):
                 RRlist.append(cur_list[0])
                 APlist.append(float(sum(cur_list)) / len(cur_list))
 
+        all_score = np.array(all_score)
+        all_label = np.array(all_label)
         MRR = float(sum(RRlist)) / len(RRlist)
         log["MRR"] = MRR
         MAP = float(sum(APlist)) / len(APlist)
