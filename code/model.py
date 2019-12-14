@@ -2,6 +2,7 @@
 #-*- coding: utf-8 -*-
 
 from IPython import embed
+import random
 import numpy as np
 import torch
 import logging
@@ -87,12 +88,12 @@ class BaseModel(nn.Module):
 
             positive_score = model.forward(positive_question, positive_answer, positive_question_length, positive_answer_length)
             negative_score = model.forward(negative_question, negative_answer, negative_question_length, negative_answer_length)
-            positive_score = positive_score.repeat(negative_sample_size)
-            loss = model.loss_func(positive_score, negative_score) if if_pos else model.loss_func(negative_score, positive_score)
-            # target = torch.cat([torch.ones(positive_score.size()), torch.zeros(negative_score.size())])
-            # if args.cuda:
-            #     target = target.cuda()
-            # loss = F.binary_cross_entropy(torch.cat([positive_score, negative_score]), target)
+            # positive_score = positive_score.repeat(negative_sample_size)
+            # loss = model.loss_func(positive_score, negative_score) if if_pos else model.loss_func(negative_score, positive_score)
+            target = torch.cat([torch.ones(positive_score.size()), torch.zeros(negative_score.size())])
+            if args.cuda:
+                target = target.cuda()
+            loss = F.binary_cross_entropy(torch.cat([positive_score, negative_score]), target)
             loss.backward()
             optimizer.step()
             if lr_scheduler:
@@ -173,16 +174,14 @@ class BaseModel(nn.Module):
 
         all_score = np.array(all_score)
         all_label = np.array(all_label)
-        MRR = float(sum(RRlist)) / len(RRlist)
-        log["MRR"] = MRR
-        MAP = float(sum(APlist)) / len(APlist)
-        log["MAP"] = MAP
+        log["MRR"] = float(sum(RRlist)) / len(RRlist)
+        log["MAP"] = float(sum(APlist)) / len(APlist)
+        log["Average Positive Score"] = all_score[all_label == 1].mean()
+        log["Average Negative Score"] = all_score[all_label == 0].mean()
+        log["precision"] = precision_score(all_label, all_score > 0.5)
+        log["recall"] = recall_score(all_label, all_score > 0.5)
+        log["f1"] = f1_score(all_label, all_score > 0.5)
 
-        # all_score = np.array(all_score)
-        # all_label = np.array(all_label)
-        # precision = precision_score(all_label, all_score)
-        # recall = recall_score(all_label, all_score)
-        # f1 = f1_score(all_label, all_score)
         return log
 
 class CNNModel(BaseModel):
@@ -200,18 +199,18 @@ class CNNModel(BaseModel):
         self.pooling2 = nn.MaxPool2d((1, self.config.ans_max_len),
                                      stride=(1, self.config.ans_max_len), padding=0)
         self.fc1 = nn.Sequential(
-            nn.Linear(self.config.que_max_len * self.config.channel_size, 20),
+            nn.Linear(self.config.que_max_len * self.config.channel_size, 300),
             nn.ReLU(),
             nn.Dropout(p=self.config.dropout),
-            nn.Linear(20, 1))
+            nn.Linear(300, 1))
 
         self.fc2 = nn.Sequential(
-            nn.Linear(self.config.ans_max_len * self.config.channel_size, 20),
+            nn.Linear(self.config.ans_max_len * self.config.channel_size, 300),
             nn.ReLU(),
             nn.Dropout(p=self.config.dropout),
-            nn.Linear(20, 1))
+            nn.Linear(300, 1))
 
-        self.fc = nn.Linear(2, 2)
+        self.fc = nn.Linear(2, 1)
 
     def dynamic_pooling_index(self, len1, len2, max_len1, max_len2):
         def dpool_index_(batch_idx, len1_one, len2_one, max_len1, max_len2):
@@ -280,7 +279,7 @@ class CNNModel(BaseModel):
         answer = self.embedding(answer)
         score1, score2 = self.matchPyramid(question, answer, question_length, answer_length)
         score = self.fc(torch.cat((score1, score2), 1))
-        return score
+        return torch.sigmoid(score).view(-1)
 
 class RNNModel(BaseModel):
     def __init__(self, args):
@@ -339,6 +338,110 @@ class RNNModel(BaseModel):
         # rnn_output = rnn_output.squeeze(0)
         # score = self.fc(rnn_output)
         return score
+
+    @staticmethod
+    def max_pooling3D(sentence):
+        '''
+        :param lstm_out: (batch_size, seq_len, hidden_dim)
+        :return:
+        '''
+        batch_size, seq_len, hidden_dim = sentence.shape
+        sentence = sentence.unsqueeze(-1)
+        maxpooling = nn.MaxPool3d(kernel_size=[seq_len, 1, 1], stride=[1, 1, 1], padding=0)
+        output = maxpooling(sentence)
+        output = output.view(batch_size, hidden_dim)
+        return output
+
+    @staticmethod
+    def do_train(model, optimizer, train_dataloader, args, lr_scheduler=None, warmup_scheduler=None):
+        logging.info("using MarginLoss")
+        model.train()
+        count = 0
+        log_loss = 0
+        for positive_question, positive_question_length, positive_answer, positive_answer_length, \
+               negative_question, negative_question_length, negative_answer, negative_answer_length, if_pos in train_dataloader:
+            count += 1
+            optimizer.zero_grad()
+            batch_size = positive_answer.shape[0]
+            negative_sample_size = negative_answer.shape[0] // batch_size
+            if args.cuda:
+                positive_question = positive_question.cuda()
+                positive_answer = positive_answer.cuda()
+                negative_question = negative_question.cuda()
+                negative_answer = negative_answer.cuda()
+
+            positive_score = model.forward(positive_question, positive_answer, positive_question_length, positive_answer_length)
+            negative_score = model.forward(negative_question, negative_answer, negative_question_length, negative_answer_length)
+            positive_score = positive_score.repeat(negative_sample_size)
+            loss = model.loss_func(positive_score, negative_score) if if_pos else model.loss_func(negative_score, positive_score)
+            # target = torch.cat([torch.ones(positive_score.size()), torch.zeros(negative_score.size())])
+            # if args.cuda:
+            #     target = target.cuda()
+            # loss = F.binary_cross_entropy(torch.cat([positive_score, negative_score]), target)
+            loss.backward()
+            optimizer.step()
+            if lr_scheduler:
+                lr_scheduler.step()
+            if warmup_scheduler:
+                warmup_scheduler.dampen()
+            log_loss += loss.item()
+            if count % model.config.log_step == 0:
+                logging.info("count: %d, loss: %s" % (count, log_loss/model.config.log_step))
+                log_loss = 0
+
+class CNNRNNModel(CNNModel):
+    def __init__(self, args):
+        super(CNNRNNModel, self).__init__(args)
+        self.question_encoder = nn.GRU(
+            input_size=args.embed_dim, hidden_size=args.hidden_dim,
+            num_layers=args.num_layers, dropout=args.dropout,
+            bidirectional=args.birnn
+        )
+        self.answer_encoder = nn.GRU(
+            input_size=args.embed_dim, hidden_size=args.hidden_dim,
+            num_layers=args.num_layers, dropout=args.dropout,
+            bidirectional=args.birnn
+        )
+        self.fc = nn.Linear(3, 1)
+
+    def encode(self, encoder, input, input_length, hidden=None):
+        input = torch.transpose(input, 0, 1)
+        input_length_sorted = sorted(input_length, reverse=True)
+        sort_index = np.argsort(-np.array(input_length)).tolist()
+        input_sorted = Variable(torch.zeros(input.size())).cuda()
+        batch_size = input.size()[1]
+        for b in range(batch_size):
+            input_sorted[:, b, :] = input[:, sort_index[b], :]
+        packed = torch.nn.utils.rnn.pack_padded_sequence(input_sorted, input_length_sorted)
+        outputs, hidden = encoder(packed, hidden)
+        outputs, output_lengths = torch.nn.utils.rnn.pad_packed_sequence(outputs)
+        outputs_resorted = Variable(torch.zeros(outputs.size())).cuda()
+        hidden_resorted = Variable(torch.zeros(hidden.size())).cuda()
+        for b in range(batch_size):
+            outputs_resorted[:, sort_index[b], :] = outputs[:, b, :]
+            hidden_resorted[:, sort_index[b], :] = hidden[:, b, :]
+
+        hidden_resorted = torch.sum(hidden_resorted, dim=0)
+        outputs_resorted = torch.transpose(outputs_resorted, 0, 1)
+        return outputs_resorted, hidden_resorted
+
+    def forward(self, question, answer, question_length, answer_length):
+        question = self.embedding(question)
+        answer = self.embedding(answer)
+        score1, score2 = self.matchPyramid(question, answer, question_length, answer_length)
+
+        question, question_hidden = self.encode(self.question_encoder, question, question_length)
+        answer, answer_hidden = self.encode(self.answer_encoder, answer, answer_length)
+        question = torch.tanh(self.max_pooling3D(question))
+        answer = torch.tanh(self.max_pooling3D(answer))
+        score3 = torch.cosine_similarity(question, answer, dim=1).unsqueeze(-1)
+        score = self.fc(torch.cat((score1, score2, score3), 1))
+        # if random.uniform(0, 1)<0.0001:
+        #     print(score1.mean())
+        #     print(score2.mean())
+        #     print(score3.mean())
+        #     print(score.mean())
+        return torch.sigmoid(score.view(-1))
 
     @staticmethod
     def max_pooling3D(sentence):

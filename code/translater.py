@@ -89,7 +89,7 @@ def data_argumentation(train_file = "./data/train-set.data", gen_train_file = ".
                 fw.write("%s\t%s\t%s\n" % (q, a, "0"))
 
 ############################# 分词部分 #############################
-def get_id_sequence(train_file = "./data/gen_train-set.data", valid_file = "./data/validation-set.data",
+def get_id_sequence(train_file = "./data/train-set.data", valid_file = "./data/validation-set.data",
                     new_train_file = "./data/train.pkl", new_valid_file = "./data/valid.pkl"):
     word2id = {}
     id2word = {}
