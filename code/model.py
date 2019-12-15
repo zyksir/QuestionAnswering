@@ -67,9 +67,10 @@ class BaseModel(nn.Module):
     def do_train(model, optimizer, train_dataloader, args, lr_scheduler=None, warmup_scheduler=None):
         '''
         :param
-            question: (batch_size, que_size)
+            pos_question: (batch_size, que_size)
             pos_answer: (batch_size, pos_size)
-            neg_answer: (batch_size, negative_sample_size, neg_size)
+            neg_question: (batch_size*negative_sample_size, que_size2)
+            neg_answer: (batch_size*negative_sample_size, neg_size)
         '''
         model.train()
         count = 0
@@ -244,7 +245,7 @@ class CNNModel(BaseModel):
         ans_len = answer.shape[1]
         if que_len > self.config.que_max_len:
             question = question[:, 0:self.config.que_max_len, :]
-            question_length[answer_length > self.config.que_max_len] = self.config.que_max_len
+            question_length[question_length > self.config.que_max_len] = self.config.que_max_len
         if ans_len > self.config.ans_max_len:
             answer = answer[:, 0:self.config.ans_max_len, :]
             answer_length[answer_length > self.config.ans_max_len] = self.config.ans_max_len
