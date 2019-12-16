@@ -77,7 +77,7 @@ class TrainDataset(Dataset):
         for line in all_triples:
             if line[2] == if_pos:
                 pos.append((line[0], line[1]))
-            else:
+            elif len(line[1]) > 0:
                 neg.append((line[0], line[1]))
         return pos, neg
 
