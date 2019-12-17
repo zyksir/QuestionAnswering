@@ -75,9 +75,9 @@ class TrainDataset(Dataset):
         all_triples = pickle.load(open(filename, "rb"))
         pos, neg = [], []
         for line in all_triples:
-            if line[2] == if_pos and len(line[1]) > 0:
+            if line[2] == if_pos and len(line[1]) > 0 and len(line[0]) > 0:
                 pos.append((line[0], line[1]))
-            elif len(line[1]) > 0:
+            elif len(line[1]) > 0 and len(line[0]) > 0:
                 neg.append((line[0], line[1]))
         return pos, neg
 

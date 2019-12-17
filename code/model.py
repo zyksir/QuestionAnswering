@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 from sklearn.metrics import recall_score, precision_score, accuracy_score, f1_score
+from UtilsDCN import get_pretrained_embedding, init_lstm_forget_bias, DCNEncoder, DCNFusionBiLSTM 
 
 def inverse_sigmoid(score):
     return -torch.log(1/(score+1e-7) - 1)
@@ -456,3 +457,77 @@ class CNNRNNModel(CNNModel):
         output = maxpooling(sentence)
         output = output.view(batch_size, hidden_dim)
         return output
+
+class CoattentionModel(BaseModel):
+    def __init__(self,args):
+        super(CoattentionModel, self).__init__(args)
+        '''
+        params:
+            hidden_dim: the hidden size of LSTM networks
+            emb_dim: the embedding size of words 
+            dropout_ratio: the dropout rate for encoder layer and fusion layer
+        '''
+        self.hidden_dim = self.config.hidden_dim
+        self.emb_dim = self.config.embed_dim
+        self.dropout_ratio = self.config.dropout
+        self.if_bidirec_init = 0
+
+        self.encoder = DCNEncoder(self.hidden_dim, self.embedding, self.dropout_ratio, self.if_bidirec_init)
+        self.q_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
+        self.fusion_lstm = DCNFusionBiLSTM(self.hidden_dim, self.dropout_ratio)
+        self.output = nn.Linear(2*self.hidden_dim, 1)
+        
+        self.dropout = nn.Dropout(p=self.dropout_ratio)
+    
+    def forward(self, q_seq, d_seq, q_mask, d_mask):
+        '''
+        input alias:
+            q_seq: question words
+            d_seq: answer words
+            q_mask: boolen question length (batch_size, batch_question_seq_size)
+            d_mask: boolen answer lengths (batch_size, batch_answer_seq_size)
+        '''
+        # 1. Encode question and document
+        # size: (batch_size, question_size + 1, embedding_size)
+        Q = self.encoder(q_seq, q_mask)
+        # size: (batch_size, document_size + 1, embedding_size)
+        D = self.encoder(d_seq, d_mask)  
+
+        # 2. Project Q
+        # Allow for variation between question encoding space and document encoding space
+        # Linear layer + Activation layer to project Q
+        # size: (batch_size, question_size + 1, embedding_size)
+        Q = torch.tanh(self.q_proj(Q.view(-1, self.hidden_dim))).view(Q.size()) 
+
+        # 3. Calculate attention
+        # Calculate similarity matrix L
+        # size: (batch_size, embedding_size, document_size+1)
+        D_t = torch.transpose(D, 1, 2)
+        # size: (batch_size, question_size+1, document_size+1)
+        L = torch.bmm(Q, D_t) 
+
+        # A_Q: for each word in the question, m+1 document word attention add up to 1
+        A_Q_ = F.softmax(L, dim=1) # (B, n+1, m+1)
+        A_Q = torch.transpose(A_Q_, 1, 2) # (B, m+1, n+1)
+        C_Q = torch.bmm(D_t, A_Q) # (B, l, n+1)
+
+        # A_D: for each word in the document, n+1 question word attention add up to 1
+        Q_t = torch.transpose(Q, 1, 2)  # (B, l, n+1)
+        A_D = F.softmax(L, dim=2)  # (B, n+1, m+1)
+        C_D = torch.bmm(torch.cat((Q_t, C_Q), 1), A_D) # (B, 2l, m+1)
+
+        C_D_t = torch.transpose(C_D, 1, 2)  # (B, m+1, 2l)
+
+        # 4. Fusion BiLSTM
+        # size: (batch_size, document_size+1, 3l)
+        # mark: kind of transpose from original figure
+        bilstm_in = torch.cat((C_D_t, D), 2) 
+        bilstm_in = self.dropout(bilstm_in)
+        # final embedding
+        # size: (batch_size, seq_len, 2*embedding_size)
+        U = self.fusion_lstm(bilstm_in, d_mask) 
+        final_embedding = U[:,-1,:].squeeze(1)
+        out = torch.sigmoid(self.output(final_embedding))
+
+        return out
+

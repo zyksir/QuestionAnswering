@@ -4,19 +4,27 @@
 import os
 import pickle
 import torch
-import logging
+import logging, random
+import numpy as np
 from torch.utils.data import DataLoader
 import argparse
 import pytorch_warmup as warmup
 from IPython import embed
-from model import CNNModel, RNNModel, CNNRNNModel
+from model import CNNModel, RNNModel, CNNRNNModel, CoattentionModel
 from dataloader import TrainDataset, TestDataset
 
 torch.set_num_threads(8)
+
+SEED = 1
+torch.manual_seed(SEED)
+np.random.seed(SEED)
+random.seed(SEED)
+
 model_name2model = {
     "RNN": RNNModel,
     "CNN": CNNModel,
-    "CNNRNN": CNNRNNModel
+    "CNNRNN": CNNRNNModel,
+    "Coattention": CoattentionModel
 }
 
 def log_metrics(epoch, metrics):
@@ -31,10 +39,10 @@ def parse_args(args=None):
     parser.add_argument('--adv_temperature', type=int, default=10)
     parser.add_argument('--margin', type=float, default=0.75)
     parser.add_argument('--class_weights', type=str, default="[0.1, 1]")
-    parser.add_argument('--word2id', type=str, default="./data/word2id.pkl")
-    parser.add_argument('--id2word', type=str, default="./data/id2word.pkl")
-    parser.add_argument('--train_file', type=str, default="./data/train.pkl")
-    parser.add_argument('--valid_file', type=str, default="./data/valid.pkl")
+    parser.add_argument('--word2id', type=str, default="../data/word2id.pkl")
+    parser.add_argument('--id2word', type=str, default="../data/id2word.pkl")
+    parser.add_argument('--train_file', type=str, default="../data/train.pkl")
+    parser.add_argument('--valid_file', type=str, default="../data/valid.pkl")
     parser.add_argument('--negative_sample_size', type=int, default=3)
     parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('-cpu', '--cpu_num', default=10, type=int)
