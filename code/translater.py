@@ -103,7 +103,7 @@ def get_id_sequence(train_file = "./data/train-set.data", valid_file = "./data/v
     #     text = comp.sub(' ', text)
     #     return text
 
-    for word in ["[PAD]", "[START]", "[END]"]:
+    for word in ["[PAD]", "[START]", "[END]", "[UNKNOWN]"]:
         new_id = len(word2id)
         word2id[word] = new_id
         id2word[new_id] = word

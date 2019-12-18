@@ -48,7 +48,7 @@ class DCNEncoder(nn.Module):
         self.sentinel = nn.Parameter(torch.rand(hidden_dim,))
 
     def forward(self, seq, seq_len):
-        mask = torch.zeros(seq.shape[0],seq.shape[1])
+        mask = torch.zeros(seq.shape[0],seq.shape[1]).to(seq.device)
         for i in range(seq_len.shape[0]):
             mask[i][:seq_len[i]] = 1
         lens = torch.sum(mask, 1)
@@ -59,8 +59,8 @@ class DCNEncoder(nn.Module):
         seq_embd = self.embedding(seq_)
         packed = pack_padded_sequence(seq_embd, lens_sorted, batch_first=True)
 
-        h0 = torch.zeros(1, seq.shape[0], self.hidden_dim)
-        c0 = torch.zeros(1, seq.shape[0], self.hidden_dim)
+        h0 = torch.zeros(1, seq.shape[0], self.hidden_dim).to(seq.device)
+        c0 = torch.zeros(1, seq.shape[0], self.hidden_dim).to(seq.device)
         output, _ = self.encoder(packed,(h0,c0))
 
         # e sorted by seq length (descending)
@@ -78,9 +78,7 @@ class DCNEncoder(nn.Module):
         sentinel_exp = self.sentinel.unsqueeze(0).expand(b, self.hidden_dim).unsqueeze(1).contiguous()  
         lens = lens.unsqueeze(1).expand(b, self.hidden_dim).unsqueeze(1)
 
-        sentinel_zero = torch.zeros(b, 1, self.hidden_dim)
-        if use_cuda:
-            sentinel_zero = sentinel_zero.cuda()
+        sentinel_zero = torch.zeros(b, 1, self.hidden_dim).to(seq.device)
         
         # final embedding
         # size: (batch_size, seq_len+1, embedding_size)
@@ -100,7 +98,7 @@ class DCNFusionBiLSTM(nn.Module):
         self.dropout = nn.Dropout(p=dropout_ratio)
 
     def forward(self, seq, seq_len):
-        mask = torch.zeros(seq.shape[0],seq.shape[1])
+        mask = torch.zeros(seq.shape[0],seq.shape[1]).to(seq.device)
         for i in range(seq.shape[0]):
             mask[i][:seq_len[i]] = 1
         lens = torch.sum(mask, 1)
@@ -111,8 +109,8 @@ class DCNFusionBiLSTM(nn.Module):
         seq_ = torch.index_select(seq, 0, lens_argsort)
         packed = pack_padded_sequence(seq_, lens_sorted, batch_first=True)
 
-        h0 = torch.zeros(2, seq.shape[0], self.hidden_dim)
-        c0 = torch.zeros(2, seq.shape[0], self.hidden_dim)
+        h0 = torch.zeros(2, seq.shape[0], self.hidden_dim).to(seq.device)
+        c0 = torch.zeros(2, seq.shape[0], self.hidden_dim).to(seq.device)
         output, _ = self.fusion_bilstm(packed, (h0, c0))
 
         e, _ = pad_packed_sequence(output, batch_first=True)

@@ -87,11 +87,13 @@ class BaseModel(nn.Module):
                 positive_answer = positive_answer.cuda()
                 negative_question = negative_question.cuda()
                 negative_answer = negative_answer.cuda()
-
             positive_score = model.forward(positive_question, positive_answer, positive_question_length, positive_answer_length)
             negative_score = model.forward(negative_question, negative_answer, negative_question_length, negative_answer_length)
+            #
+            # positive_score, negative_score = positive_score.view(-1), negative_score.view(-1)
             # positive_score = positive_score.repeat(negative_sample_size)
             # loss = model.loss_func(positive_score, negative_score) if if_pos else model.loss_func(negative_score, positive_score)
+
             target = torch.cat([torch.ones(positive_score.size()), torch.zeros(negative_score.size())])
             if args.cuda:
                 target = target.cuda()
@@ -106,35 +108,9 @@ class BaseModel(nn.Module):
             if count % model.config.log_step == 0:
                 logging.info("count: %d, loss: %s" % (count, log_loss/model.config.log_step))
                 log_loss = 0
-    #
-    # @staticmethod
-    # def do_train(model, optimizer, train_dataloader, args):
-    #     '''
-    #     :param
-    #         question: (batch_size, que_size)
-    #         pos_answer: (batch_size, pos_size)
-    #         neg_answer: (batch_size, negative_sample_size, neg_size)
-    #     '''
-    #     model.train()
-    #     count = 0
-    #     log_loss = 0
-    #     for question, question_length, answer, answer_length, label in train_dataloader:
-    #         count += 1
-    #         optimizer.zero_grad()
-    #         if args.cuda:
-    #             question = question.cuda()
-    #             answer = answer.cuda()
-    #             label = label.cuda()
-    #             # question_length = question_length.cuda()
-    #             # answer_length = answer_length.cuda()
-    #         score = model.forward(question, answer, question_length, answer_length)
-    #         loss = model.loss_func(score, label)
-    #         loss.backward()
-    #         optimizer.step()
-    #         log_loss += loss.item()
-    #         if count % model.config.log_step == 0:
-    #             logging.info("count: %d, loss: %s" % (count, log_loss/model.config.log_step))
-    #             log_loss = 0
+                # if random.uniform(0, 1) < 0.01:
+                print("######################################################################")
+                print(positive_score)
 
     @staticmethod
     def do_valid(model, valid_dataloader, args):
@@ -354,43 +330,6 @@ class RNNModel(BaseModel):
         output = output.view(batch_size, hidden_dim)
         return output
 
-    @staticmethod
-    def do_train(model, optimizer, train_dataloader, args, lr_scheduler=None, warmup_scheduler=None):
-        logging.info("using MarginLoss")
-        model.train()
-        count = 0
-        log_loss = 0
-        for positive_question, positive_question_length, positive_answer, positive_answer_length, \
-               negative_question, negative_question_length, negative_answer, negative_answer_length, if_pos in train_dataloader:
-            count += 1
-            optimizer.zero_grad()
-            batch_size = positive_answer.shape[0]
-            negative_sample_size = negative_answer.shape[0] // batch_size
-            if args.cuda:
-                positive_question = positive_question.cuda()
-                positive_answer = positive_answer.cuda()
-                negative_question = negative_question.cuda()
-                negative_answer = negative_answer.cuda()
-
-            positive_score = model.forward(positive_question, positive_answer, positive_question_length, positive_answer_length)
-            negative_score = model.forward(negative_question, negative_answer, negative_question_length, negative_answer_length)
-            positive_score = positive_score.repeat(negative_sample_size)
-            loss = model.loss_func(positive_score, negative_score) if if_pos else model.loss_func(negative_score, positive_score)
-            # target = torch.cat([torch.ones(positive_score.size()), torch.zeros(negative_score.size())])
-            # if args.cuda:
-            #     target = target.cuda()
-            # loss = F.binary_cross_entropy(torch.cat([positive_score, negative_score]), target)
-            loss.backward()
-            optimizer.step()
-            if lr_scheduler:
-                lr_scheduler.step()
-            if warmup_scheduler:
-                warmup_scheduler.dampen()
-            log_loss += loss.item()
-            if count % model.config.log_step == 0:
-                logging.info("count: %d, loss: %s" % (count, log_loss/model.config.log_step))
-                log_loss = 0
-
 class CNNRNNModel(CNNModel):
     def __init__(self, args):
         super(CNNRNNModel, self).__init__(args)
@@ -410,15 +349,20 @@ class CNNRNNModel(CNNModel):
         input = torch.transpose(input, 0, 1)
         input_length_sorted = sorted(input_length, reverse=True)
         sort_index = np.argsort(-np.array(input_length)).tolist()
-        input_sorted = Variable(torch.zeros(input.size())).cuda()
+        input_sorted = Variable(torch.zeros(input.size()))
+        if self.config.cuda:
+            input_sorted = input_sorted.cuda()
         batch_size = input.size()[1]
         for b in range(batch_size):
             input_sorted[:, b, :] = input[:, sort_index[b], :]
         packed = torch.nn.utils.rnn.pack_padded_sequence(input_sorted, input_length_sorted)
         outputs, hidden = encoder(packed, hidden)
         outputs, output_lengths = torch.nn.utils.rnn.pad_packed_sequence(outputs)
-        outputs_resorted = Variable(torch.zeros(outputs.size())).cuda()
-        hidden_resorted = Variable(torch.zeros(hidden.size())).cuda()
+        outputs_resorted = Variable(torch.zeros(outputs.size()))
+        hidden_resorted = Variable(torch.zeros(hidden.size()))
+        if self.config.cuda:
+            outputs_resorted = outputs_resorted.cuda()
+            hidden_resorted = hidden_resorted.cuda()
         for b in range(batch_size):
             outputs_resorted[:, sort_index[b], :] = outputs[:, b, :]
             hidden_resorted[:, sort_index[b], :] = hidden[:, b, :]
@@ -491,7 +435,7 @@ class CoattentionModel(BaseModel):
         # size: (batch_size, question_size + 1, embedding_size)
         Q = self.encoder(q_seq, q_mask)
         # size: (batch_size, document_size + 1, embedding_size)
-        D = self.encoder(d_seq, d_mask)  
+        D = self.encoder(d_seq, d_mask)
 
         # 2. Project Q
         # Allow for variation between question encoding space and document encoding space

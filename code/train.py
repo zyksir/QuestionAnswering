@@ -39,10 +39,10 @@ def parse_args(args=None):
     parser.add_argument('--adv_temperature', type=int, default=10)
     parser.add_argument('--margin', type=float, default=0.75)
     parser.add_argument('--class_weights', type=str, default="[0.1, 1]")
-    parser.add_argument('--word2id', type=str, default="../data/word2id.pkl")
-    parser.add_argument('--id2word', type=str, default="../data/id2word.pkl")
-    parser.add_argument('--train_file', type=str, default="../data/train.pkl")
-    parser.add_argument('--valid_file', type=str, default="../data/valid.pkl")
+    parser.add_argument('--word2id', type=str, default="./data/word2id.pkl")
+    parser.add_argument('--id2word', type=str, default="./data/id2word.pkl")
+    parser.add_argument('--train_file', type=str, default="./data/train.pkl")
+    parser.add_argument('--valid_file', type=str, default="./data/valid.pkl")
     parser.add_argument('--negative_sample_size', type=int, default=3)
     parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('-cpu', '--cpu_num', default=10, type=int)
@@ -120,7 +120,7 @@ def main(args):
     num_steps = len(train_dataloader) * args.num_epochs
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=0.01)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, num_steps // 2, gamma=0.1)
-    warmup_scheduler = warmup.UntunedLinearWarmup(optimizer)
+    warmup_scheduler = None #warmup.UntunedLinearWarmup(optimizer)
     if args.cuda:
         model = model.cuda()
 
