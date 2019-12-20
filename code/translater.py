@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 #-*- coding: utf-8 -*-
 '''
+数据预处理
 输入：一个文件，三元组形式：[自然语言问题，自然语言答案，标签]
 输出：一个文件，三元组形式：[[数字序列], [数字序列], 0或者1]
 '''
@@ -13,6 +14,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 from collections import defaultdict
+from IPython import embed
 
 jieba.load_userdict("./data/pretrained_word.txt")
 ############################# 数据增强 #############################
@@ -94,7 +96,8 @@ def get_id_sequence(train_file = "./data/train-set.data", valid_file = "./data/v
     word2id = {}
     id2word = {}
     sentences = set()
-    sentences2ids = {}
+    sentences2question_ids = {}
+    sentences2answer_ids = {}
     # def clean_zh_text(text):
     #     # keep English, digital and Chinese
     #     comp = re.compile('[^A-Z^a-z^0-9^\u4e00-\u9fa5]')
@@ -103,31 +106,50 @@ def get_id_sequence(train_file = "./data/train-set.data", valid_file = "./data/v
     #     text = comp.sub(' ', text)
     #     return text
 
-    for word in ["[PAD]", "[START]", "[END]", "[UNKNOWN]"]:
+    for word in ["[PADq]", "[STARTq]", "[ENDq]", "[UNKNOWNq]", "[PADa]", "[STARTa]", "[ENDa]", "[UNKNOWNa]"]:
         new_id = len(word2id)
         word2id[word] = new_id
         id2word[new_id] = word
 
-    for filename in [train_file, valid_file]:
-        with open(filename, "r") as f:
-            for line in f:
-                line = line.strip().split("\t")
-                sentences.add(line[0])
-                sentences.add(line[1])
-                # sentences.add(clean_zh_text(line[0]))
-                # sentences.add(clean_zh_text(line[1]))
+    with open(train_file, "r") as f:
+        for line in f:
+            line = line.strip().split("\t")
+            sentences.add(line[0])
+            sentences.add(line[1])
+            if line[0] == "" or line[1] == "":
+                print(line)
 
-    for sentence in tqdm(sentences):
+    for sentence in sentences:
         words = jieba.cut(sentence, cut_all=False)
-        sentences2ids[sentence] = []
-        sentences2ids[sentence].append(word2id["[START]"])
+        ids = []
         for word in words:
             if word not in word2id:
                 new_id = len(word2id)
                 word2id[word] = new_id
                 id2word[new_id] = word
-            sentences2ids[sentence].append(word2id[word])
-        sentences2ids[sentence].append(word2id["[END]"])
+            ids.append(word2id[word])
+        sentences2question_ids[sentence] = [word2id["[STARTq]"]] + ids + [word2id["[ENDq]"]]
+        sentences2answer_ids[sentence] = [word2id["[STARTa]"]] + ids + [word2id["[ENDa]"]]
+
+    with open(valid_file, "r") as f:
+        for line in f:
+            line = line.strip().split("\t")
+            sentences.add(line[0])
+            sentences.add(line[1])
+
+    for sentence in tqdm(sentences):
+        if sentence not in sentences2question_ids:
+            words = jieba.cut(sentence, cut_all=False)
+            sentences2question_ids[sentence] = [word2id["[STARTq]"]]
+            for word in words:
+                sentences2question_ids[sentence].append(word2id[word] if word in word2id else word2id["[UNKNOWNq]"])
+            sentences2question_ids[sentence].append(word2id["[ENDq]"])
+        if sentence not in sentences2answer_ids:
+            words = jieba.cut(sentence, cut_all=False)
+            sentences2answer_ids[sentence] = [word2id["[STARTa]"]]
+            for word in words:
+                sentences2answer_ids[sentence].append(word2id[word] if word in word2id else word2id["[UNKNOWNa]"])
+            sentences2answer_ids[sentence].append(word2id["[ENDa]"])
 
     with open("./data/word2id.pkl", "wb") as fw:
         pickle.dump(word2id, fw)
@@ -139,16 +161,14 @@ def get_id_sequence(train_file = "./data/train-set.data", valid_file = "./data/v
         train_triples = []
         for line in f:
             line = line.strip().split("\t")
-            train_triples.append((sentences2ids[line[0]], sentences2ids[line[1]], int(line[2])))
-            # train_triples.append((sentences2ids[clean_zh_text(line[0])], sentences2ids[clean_zh_text(line[1])], int(line[2])))
+            train_triples.append((sentences2question_ids[line[0]], sentences2answer_ids[line[1]], int(line[2])))
         pickle.dump(train_triples, fw)
 
     with open(valid_file, "r") as f, open(new_valid_file, "wb") as fw:
         valid_triples = []
         for line in f:
             line = line.strip().split("\t")
-            valid_triples.append((sentences2ids[line[0]], sentences2ids[line[1]], int(line[2])))
-            # valid_triples.append((sentences2ids[clean_zh_text(line[0])], sentences2ids[clean_zh_text(line[1])], int(line[2])))
+            valid_triples.append((sentences2question_ids[line[0]], sentences2answer_ids[line[1]], int(line[2])))
         pickle.dump(valid_triples, fw)
 
 # def ids2word(ids):
@@ -214,6 +234,6 @@ def generate_pretrain_word_embedding(pretrain_path="./data/baidubaike", word2id_
 #         word, weights = parts[0], list(map(float, parts[1:]))
 #         fout.write(word + "\n")
 
-data_argumentation()
+# data_argumentation()
 get_id_sequence()
 generate_pretrain_word_embedding()

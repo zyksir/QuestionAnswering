@@ -89,15 +89,21 @@ class BaseModel(nn.Module):
                 negative_answer = negative_answer.cuda()
             positive_score = model.forward(positive_question, positive_answer, positive_question_length, positive_answer_length)
             negative_score = model.forward(negative_question, negative_answer, negative_question_length, negative_answer_length)
-            #
-            # positive_score, negative_score = positive_score.view(-1), negative_score.view(-1)
-            # positive_score = positive_score.repeat(negative_sample_size)
-            # loss = model.loss_func(positive_score, negative_score) if if_pos else model.loss_func(negative_score, positive_score)
 
-            target = torch.cat([torch.ones(positive_score.size()), torch.zeros(negative_score.size())])
-            if args.cuda:
-                target = target.cuda()
-            loss = F.binary_cross_entropy(torch.cat([positive_score, negative_score]), target)
+            positive_score, negative_score = positive_score.view(-1), negative_score.view(-1)
+            positive_score = positive_score.repeat(negative_sample_size)
+            loss = model.loss_func(positive_score, negative_score) if if_pos else model.loss_func(negative_score, positive_score)
+
+            # target = torch.cat([torch.ones(positive_score.size()), torch.zeros(negative_score.size())])
+            # if args.cuda:
+            #     target = target.cuda()
+            # loss = F.binary_cross_entropy(torch.cat([positive_score, negative_score]), target)
+
+            # target = torch.cat([torch.ones(positive_score.size()), torch.zeros(negative_score.size())])
+            # if args.cuda:
+            #     target = target.cuda()
+            # loss = model.loss_func(torch.cat([positive_score, negative_score]), target)
+
             loss.backward()
             optimizer.step()
             if lr_scheduler:
@@ -109,8 +115,8 @@ class BaseModel(nn.Module):
                 logging.info("count: %d, loss: %s" % (count, log_loss/model.config.log_step))
                 log_loss = 0
                 # if random.uniform(0, 1) < 0.01:
-                print("######################################################################")
-                print(positive_score)
+                # print("######################################################################")
+                # print(positive_score)
 
     @staticmethod
     def do_valid(model, valid_dataloader, args):
@@ -156,11 +162,40 @@ class BaseModel(nn.Module):
         log["MAP"] = float(sum(APlist)) / len(APlist)
         log["Average Positive Score"] = all_score[all_label == 1].mean()
         log["Average Negative Score"] = all_score[all_label == 0].mean()
-        log["precision"] = precision_score(all_label, all_score > 0.5)
-        log["recall"] = recall_score(all_label, all_score > 0.5)
-        log["f1"] = f1_score(all_label, all_score > 0.5)
+
+        threshold = (log["Average Positive Score"]*args.negative_sample_size+log["Average Negative Score"]) / (args.negative_sample_size+1)
+        log["precision"] = precision_score(all_label, all_score > threshold)
+        log["recall"] = recall_score(all_label, all_score > threshold)
+        log["f1"] = f1_score(all_label, all_score > threshold)
+        log["threshold"] = threshold
 
         return log
+
+    @staticmethod
+    def do_prediction(model, test_file, valid_dataloader, args, word2id):
+        model.load_state_dict(torch.load(args.best_model_path))
+        log = model.do_valid(model, valid_dataloader, args)
+        threshold = log["threshold"]
+        with open(test_file, "r") as f, open(args.predict_file, "w") as fw:
+            import jieba
+            jieba.load_userdict("./data/pretrained_word.txt")
+            for line in f:
+                line = line.strip().split("\t")
+                question, answer = [word2id["[START]"]], [word2id["[START]"]]
+                for word in line[0]:
+                    question.append(word2id[word] if word in word2id else word2id["[UNKNOWN]"])
+                for word in line[1]:
+                    answer.append(word2id[word] if word in word2id else word2id["[UNKNOWN]"])
+                # question.append(word2id["[END]"])
+                # answer.append(word2id["[END]"])
+                question_length, answer_length = torch.LongTensor(len(question)).unsqueeze(0), torch.LongTensor(len(answer)).unsqueeze(0)
+                question, answer = torch.LongTensor(question).unsqueeze(0), torch.LongTensor(answer).unsqueeze(0)
+                if args.cuda:
+                    question, question_length = question.cuda(), question_length.cuda()
+                    answer, answer_length = answer.cuda(), answer_length.cuda()
+                score = model(question, answer, question_length, answer_length)
+                fw.write("%s\t%s\t%f\t%d\n" % (line[0], line[1], score.item(), int(score>threshold)))
+
 
 class CNNModel(BaseModel):
     def __init__(self, args):
@@ -222,10 +257,8 @@ class CNNModel(BaseModel):
         ans_len = answer.shape[1]
         if que_len > self.config.que_max_len:
             question = question[:, 0:self.config.que_max_len, :]
-            question_length[question_length > self.config.que_max_len] = self.config.que_max_len
         if ans_len > self.config.ans_max_len:
             answer = answer[:, 0:self.config.ans_max_len, :]
-            answer_length[answer_length > self.config.ans_max_len] = self.config.ans_max_len
 
         answer_trans = torch.transpose(answer, 1, 2) # (batch_size, embed_dim, ans_len)
         question_norm = torch.sqrt(torch.sum(question * question, dim=2, keepdim=True))
@@ -272,11 +305,6 @@ class RNNModel(BaseModel):
             num_layers=args.num_layers, dropout=args.dropout,
             bidirectional=args.birnn
         )
-        self.decoder = nn.GRU(
-            input_size=args.hidden_dim*2, hidden_size=args.hidden_dim*2,
-            num_layers=args.num_layers, dropout=args.dropout
-        )
-        self.fc = nn.Linear(args.hidden_dim*2, 2)
 
     def encode(self, encoder, input, input_length, hidden=None):
         input = torch.transpose(input, 0, 1)
@@ -308,20 +336,15 @@ class RNNModel(BaseModel):
         question = torch.tanh(self.max_pooling3D(question))
         answer = torch.tanh(self.max_pooling3D(answer))
         score = torch.cosine_similarity(question, answer, dim=1)
+        # score = torch.sum(question * answer, 1)
 
-        # score = self.fc(torch.cat([question_hidden, answer_hidden], 1))
-
-        # feature = torch.cat([question_hidden, answer_hidden], 1).unsqueeze(0) # (1, batch_size, hidden_dim*2)
-        # rnn_output, rnn_hidden = self.decoder(feature, None)
-        # rnn_output = rnn_output.squeeze(0)
-        # score = self.fc(rnn_output)
         return score
 
     @staticmethod
     def max_pooling3D(sentence):
         '''
         :param lstm_out: (batch_size, seq_len, hidden_dim)
-        :return:
+        :return: (batch_size, hidden_dim)
         '''
         batch_size, seq_len, hidden_dim = sentence.shape
         sentence = sentence.unsqueeze(-1)
@@ -380,7 +403,7 @@ class CNNRNNModel(CNNModel):
         answer, answer_hidden = self.encode(self.answer_encoder, answer, answer_length)
         question = torch.tanh(self.max_pooling3D(question))
         answer = torch.tanh(self.max_pooling3D(answer))
-        score3 = torch.cosine_similarity(question, answer, dim=1).unsqueeze(-1)
+        score3 = torch.sum(question * answer, 1, keepdim=True)
         score = self.fc(torch.cat((score1, score2, score3), 1))
         # if random.uniform(0, 1)<0.0001:
         #     print(score1.mean())

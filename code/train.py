@@ -38,7 +38,7 @@ def parse_args(args=None):
     )
     parser.add_argument('--adv_temperature', type=int, default=10)
     parser.add_argument('--margin', type=float, default=0.75)
-    parser.add_argument('--class_weights', type=str, default="[0.1, 1]")
+    parser.add_argument('--class_weights', type=str, default="[1, 3]")
     parser.add_argument('--word2id', type=str, default="./data/word2id.pkl")
     parser.add_argument('--id2word', type=str, default="./data/id2word.pkl")
     parser.add_argument('--train_file', type=str, default="./data/train.pkl")
@@ -48,8 +48,8 @@ def parse_args(args=None):
     parser.add_argument('-cpu', '--cpu_num', default=10, type=int)
     parser.add_argument('--mode', type=str, default="UpSampling")
     parser.add_argument('--cuda', action='store_true', help='use GPU')
-    parser.add_argument('--num_epochs', default=10, type=int)
-    parser.add_argument('-lr', '--learning_rate', default=0.01, type=float)
+    parser.add_argument('--num_epochs', default=16, type=int)
+    parser.add_argument('-lr', '--learning_rate', default=0.001, type=float)
     parser.add_argument('-save', '--save_path', default="./models/", type=str)
 
     parser.add_argument('--word_num', default=None, type=int)
@@ -95,14 +95,15 @@ def set_logger(args):
 
 def main(args):
     #### build dataloader and logger
+    word2id = pickle.load(open(args.word2id, "rb"))
     if args.word_num is None:
-        args.word_num = len(pickle.load(open(args.word2id, "rb")))
+        args.word_num = len(word2id)
     set_logger(args)
     logging.info(args)
-    train_dataset = TrainDataset(args.train_file, args.negative_sample_size)
+    train_dataset = TrainDataset(args.train_file, args.negative_sample_size, word2id=word2id)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,
                                   num_workers=max(1, args.cpu_num // 2), collate_fn=TrainDataset.collate_fn)
-    train_dataset_neg = TrainDataset(args.train_file, 1, if_pos=False)
+    train_dataset_neg = TrainDataset(args.train_file, 1, word2id=word2id, if_pos=False)
     train_dataloader_neg = DataLoader(train_dataset_neg, batch_size=args.batch_size, shuffle=True,
                                   num_workers=max(1, args.cpu_num // 2), collate_fn=TrainDataset.collate_fn)
 

@@ -6,18 +6,19 @@ import pickle
 import random
 from collections import defaultdict
 from torch.utils.data import Dataset
+from IPython import embed
 
-PAD_INDEX = 0
-START_INDEX = 1
-END_INDEX = 2
+PAD_A = 4
+PAD_Q = 0
 
 class TrainDataset(Dataset):
-    def __init__(self, filename, negative_sample_size, if_pos=True):
+    def __init__(self, filename, negative_sample_size, word2id, if_pos=True):
         super(TrainDataset, self).__init__()
         self.pos, self.neg = self.get_train_data(filename, if_pos=if_pos)
         self.len = len(self.pos)
         self.if_pos = if_pos
         self.negative_sample_size = negative_sample_size
+        self.word2id = word2id
 
     def __len__(self):
         return self.len
@@ -46,13 +47,13 @@ class TrainDataset(Dataset):
             for neg_que, neg_ans in neg_candidate:
                 max_neg_que_len = max(max_neg_que_len, len(neg_que))
                 max_neg_ans_len = max(max_neg_ans_len, len(neg_ans))
-        positive_question = torch.LongTensor(batch_size, max_pos_que_len).fill_(PAD_INDEX)
-        positive_answer = torch.LongTensor(batch_size, max_pos_ans_len).fill_(PAD_INDEX)
+        positive_question = torch.LongTensor(batch_size, max_pos_que_len).fill_(PAD_Q)
+        positive_answer = torch.LongTensor(batch_size, max_pos_ans_len).fill_(PAD_A)
         positive_question_length = torch.LongTensor(batch_size).fill_(1)
         positive_answer_length = torch.LongTensor(batch_size).fill_(1)
 
-        negative_question = torch.LongTensor(batch_size * negative_sample_size, max_neg_que_len).fill_(PAD_INDEX)
-        negative_answer = torch.LongTensor(batch_size * negative_sample_size, max_neg_ans_len).fill_(PAD_INDEX)
+        negative_question = torch.LongTensor(batch_size * negative_sample_size, max_neg_que_len).fill_(PAD_Q)
+        negative_answer = torch.LongTensor(batch_size * negative_sample_size, max_neg_ans_len).fill_(PAD_A)
         negative_question_length = torch.LongTensor(batch_size * negative_sample_size).fill_(1)
         negative_answer_length = torch.LongTensor(batch_size * negative_sample_size).fill_(1)
         for i, (pos_sample, neg_candidate, _) in enumerate(data):
@@ -75,9 +76,9 @@ class TrainDataset(Dataset):
         all_triples = pickle.load(open(filename, "rb"))
         pos, neg = [], []
         for line in all_triples:
-            if line[2] == if_pos and len(line[1]) > 0 and len(line[0]) > 0:
+            if line[2] == if_pos:
                 pos.append((line[0], line[1]))
-            elif len(line[1]) > 0 and len(line[0]) > 0:
+            else:
                 neg.append((line[0], line[1]))
         return pos, neg
 
@@ -152,7 +153,7 @@ class TestDataset(Dataset):
                 pos_ans_len.append(len(a))
             max_pos_ans_len = max(pos_ans_len)
             positive_answer_length = torch.LongTensor(pos_ans_len)
-            positive_answer = torch.LongTensor(len(pos_ans), max_pos_ans_len).fill_(PAD_INDEX)
+            positive_answer = torch.LongTensor(len(pos_ans), max_pos_ans_len).fill_(PAD_A)
             for i, a in enumerate(pos_ans):
                 positive_answer[i, 0:len(a)] = torch.LongTensor(a)
 
@@ -163,7 +164,7 @@ class TestDataset(Dataset):
                 neg_ans_len.append(len(a))
             max_neg_ans_len = max(neg_ans_len)
             negative_answer_length = torch.LongTensor(neg_ans_len)
-            negative_answer = torch.LongTensor(len(neg_ans), max_neg_ans_len).fill_(PAD_INDEX)
+            negative_answer = torch.LongTensor(len(neg_ans), max_neg_ans_len).fill_(PAD_A)
             for i, a in enumerate(neg_ans):
                 negative_answer[i, 0:len(a)] = torch.LongTensor(a)
 
