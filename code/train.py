@@ -27,9 +27,9 @@ model_name2model = {
     "Coattention": CoattentionModel
 }
 
-def log_metrics(epoch, metrics):
+def log_metrics(info, metrics):
     for metric in metrics:
-        logging.info('%s at epoch %d: %f' % (metric, epoch, metrics[metric]))
+        logging.info('%s at %s: %f' % (metric, info, metrics[metric]))
 
 def parse_args(args=None):
     parser = argparse.ArgumentParser(
@@ -48,7 +48,7 @@ def parse_args(args=None):
     parser.add_argument('-cpu', '--cpu_num', default=10, type=int)
     parser.add_argument('--mode', type=str, default="UpSampling")
     parser.add_argument('--cuda', action='store_true', help='use GPU')
-    parser.add_argument('--num_epochs', default=16, type=int)
+    parser.add_argument('--num_epochs', default=10, type=int)
     parser.add_argument('-lr', '--learning_rate', default=0.001, type=float)
     parser.add_argument('-save', '--save_path', default="./models/", type=str)
 
@@ -71,6 +71,9 @@ def parse_args(args=None):
     parser.add_argument('--log_step', type=int, default=50)
     parser.add_argument('--valid_epochs', type=int, default=1)
     parser.add_argument('--pretrain', type=str, default="./data/pretrain.pt")
+    parser.add_argument('--best_model_path', type=str, default=None)
+    parser.add_argument('--test_file', type=str, default="./data/test-set.data")
+    parser.add_argument('--predict_file', type=str, default="./data/predict_test.data")
     return parser.parse_args(args)
 
 def set_logger(args):
@@ -79,6 +82,7 @@ def set_logger(args):
     '''
 
     log_file = os.path.join(args.save_path, '%s.log' % args.name)
+    args.predict_file = "%s_test.data" % args.name
 
     logging.basicConfig(
         format='%(asctime)s %(levelname)-8s %(message)s',
@@ -128,18 +132,21 @@ def main(args):
     # embed()
     #### begin training
     logging.info("begin training:")
-    best_model, best_MRR = None, 0
+    best_model, best_f1 = None, 0
     for epoch in range(args.num_epochs):
         model.do_train(model, optimizer, train_dataloader, args, lr_scheduler, warmup_scheduler)
         # model.do_train(model, optimizer, train_dataloader_neg, args)
         if epoch % model.config.valid_epochs == 0:
             metric = model.do_valid(model, valid_dataloader, args)
-            log_metrics(epoch, metric)
-            if metric["MRR"] > best_MRR:
+            log_metrics("epoch %d" % epoch, metric)
+            if metric["f1"] > best_f1:
                 best_model = model.state_dict()
-                best_MRR = metric["MRR"]
-    torch.save(best_model, os.path.join(args.save_path, "best_%s.pt" % args.name))
+                best_f1 = metric["f1"]
+                torch.save(best_model, os.path.join(args.save_path, "best_%s.pt" % args.name))
 
+    model.load_state_dict(best_model)
+    log = model.do_prediction(model, valid_dataloader, args, word2id)
+    log_metrics("final", log)
 
 
 if __name__ == '__main__':

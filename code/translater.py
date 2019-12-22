@@ -111,13 +111,14 @@ def get_id_sequence(train_file = "./data/train-set.data", valid_file = "./data/v
         word2id[word] = new_id
         id2word[new_id] = word
 
-    with open(train_file, "r") as f:
-        for line in f:
-            line = line.strip().split("\t")
-            sentences.add(line[0])
-            sentences.add(line[1])
-            if line[0] == "" or line[1] == "":
-                print(line)
+    for filename in [train_file, valid_file]:
+        with open(filename, "r") as f:
+            for line in f:
+                line = line.strip().split("\t")
+                sentences.add(line[0])
+                sentences.add(line[1])
+                if line[0] == "" or line[1] == "":
+                    print(line)
 
     for sentence in sentences:
         words = jieba.cut(sentence, cut_all=False)
@@ -130,26 +131,6 @@ def get_id_sequence(train_file = "./data/train-set.data", valid_file = "./data/v
             ids.append(word2id[word])
         sentences2question_ids[sentence] = [word2id["[STARTq]"]] + ids + [word2id["[ENDq]"]]
         sentences2answer_ids[sentence] = [word2id["[STARTa]"]] + ids + [word2id["[ENDa]"]]
-
-    with open(valid_file, "r") as f:
-        for line in f:
-            line = line.strip().split("\t")
-            sentences.add(line[0])
-            sentences.add(line[1])
-
-    for sentence in tqdm(sentences):
-        if sentence not in sentences2question_ids:
-            words = jieba.cut(sentence, cut_all=False)
-            sentences2question_ids[sentence] = [word2id["[STARTq]"]]
-            for word in words:
-                sentences2question_ids[sentence].append(word2id[word] if word in word2id else word2id["[UNKNOWNq]"])
-            sentences2question_ids[sentence].append(word2id["[ENDq]"])
-        if sentence not in sentences2answer_ids:
-            words = jieba.cut(sentence, cut_all=False)
-            sentences2answer_ids[sentence] = [word2id["[STARTa]"]]
-            for word in words:
-                sentences2answer_ids[sentence].append(word2id[word] if word in word2id else word2id["[UNKNOWNa]"])
-            sentences2answer_ids[sentence].append(word2id["[ENDa]"])
 
     with open("./data/word2id.pkl", "wb") as fw:
         pickle.dump(word2id, fw)

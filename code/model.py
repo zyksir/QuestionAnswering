@@ -6,10 +6,11 @@ import random
 import numpy as np
 import torch
 import logging
+from tqdm import tqdm
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from sklearn.metrics import recall_score, precision_score, accuracy_score, f1_score
+from sklearn.metrics import recall_score, precision_score, accuracy_score, f1_score, precision_recall_curve
 from UtilsDCN import get_pretrained_embedding, init_lstm_forget_bias, DCNEncoder, DCNFusionBiLSTM 
 
 def inverse_sigmoid(score):
@@ -168,33 +169,53 @@ class BaseModel(nn.Module):
         log["recall"] = recall_score(all_label, all_score > threshold)
         log["f1"] = f1_score(all_label, all_score > threshold)
         log["threshold"] = threshold
+        #
+        # precision, recall, threshold = precision_recall_curve(all_label, all_score)
+        # f1_scores = 2 * recall * precision / (recall + precision)
+        # index = np.argmax(f1_scores)
+        # log["precision"] = precision[index]
+        # log["recall"] = recall[index]
+        # log["f1"] = f1_scores[index]
+        # log["threshold"] = threshold[index]
 
         return log
 
     @staticmethod
-    def do_prediction(model, test_file, valid_dataloader, args, word2id):
-        model.load_state_dict(torch.load(args.best_model_path))
+    def do_prediction(model, valid_dataloader, args, word2id):
+        # model.load_state_dict(torch.load(args.best_model_path))
         log = model.do_valid(model, valid_dataloader, args)
         threshold = log["threshold"]
-        with open(test_file, "r") as f, open(args.predict_file, "w") as fw:
+        sentence2question_id, sentence2answer_id = {}, {}
+        with open(args.test_file, "r") as f, open(args.predict_file, "w") as fw:
             import jieba
             jieba.load_userdict("./data/pretrained_word.txt")
-            for line in f:
+            for line in tqdm(f):
                 line = line.strip().split("\t")
-                question, answer = [word2id["[START]"]], [word2id["[START]"]]
-                for word in line[0]:
-                    question.append(word2id[word] if word in word2id else word2id["[UNKNOWN]"])
-                for word in line[1]:
-                    answer.append(word2id[word] if word in word2id else word2id["[UNKNOWN]"])
-                # question.append(word2id["[END]"])
-                # answer.append(word2id["[END]"])
-                question_length, answer_length = torch.LongTensor(len(question)).unsqueeze(0), torch.LongTensor(len(answer)).unsqueeze(0)
+                if line[0] in sentence2question_id:
+                    question = sentence2question_id[line[0]]
+                else:
+                    question_sentence = jieba.cut(line[0], cut_all=False)
+                    question = [word2id["[STARTq]"]]
+                    for word in question_sentence:
+                        question.append(word2id[word] if word in word2id else word2id["[UNKNOWNq]"])
+                    question.append(word2id["[ENDq]"])
+
+                if line[1] in sentence2answer_id:
+                    answer = sentence2answer_id[line[1]]
+                else:
+                    answer_sentence = jieba.cut(line[1], cut_all=False)
+                    answer = [word2id["[STARTa]"]]
+                    for word in answer_sentence:
+                        answer.append(word2id[word] if word in word2id else word2id["[UNKNOWNa]"])
+                    answer.append(word2id["[ENDa]"])
+
+                question_length, answer_length = torch.LongTensor([len(question)]), torch.LongTensor([len(answer)])
                 question, answer = torch.LongTensor(question).unsqueeze(0), torch.LongTensor(answer).unsqueeze(0)
                 if args.cuda:
-                    question, question_length = question.cuda(), question_length.cuda()
-                    answer, answer_length = answer.cuda(), answer_length.cuda()
+                    question, answer = question.cuda(), answer.cuda()
                 score = model(question, answer, question_length, answer_length)
                 fw.write("%s\t%s\t%f\t%d\n" % (line[0], line[1], score.item(), int(score>threshold)))
+        return log
 
 
 class CNNModel(BaseModel):
@@ -426,7 +447,7 @@ class CNNRNNModel(CNNModel):
         return output
 
 class CoattentionModel(BaseModel):
-    def __init__(self,args):
+    def __init__(self, args):
         super(CoattentionModel, self).__init__(args)
         '''
         params:
@@ -442,10 +463,22 @@ class CoattentionModel(BaseModel):
         self.encoder = DCNEncoder(self.hidden_dim, self.embedding, self.dropout_ratio, self.if_bidirec_init)
         self.q_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
         self.fusion_lstm = DCNFusionBiLSTM(self.hidden_dim, self.dropout_ratio)
-        self.output = nn.Linear(2*self.hidden_dim, 1)
-        
+        self.output = nn.Linear(2 * self.hidden_dim, 1)
+
         self.dropout = nn.Dropout(p=self.dropout_ratio)
-    
+
+    def max_pooling3D(self, sentence):
+        '''
+        :param lstm_out: (batch_size, seq_len, hidden_dim)
+        :return: (batch_size, hidden_dim)
+        '''
+        batch_size, seq_len, hidden_dim = sentence.shape
+        sentence = sentence.unsqueeze(-1)
+        maxpooling = nn.MaxPool3d(kernel_size=[seq_len, 1, 1], stride=[1, 1, 1], padding=0)
+        output = maxpooling(sentence)
+        output = output.view(batch_size, hidden_dim)
+        return output
+
     def forward(self, q_seq, d_seq, q_mask, d_mask):
         '''
         input alias:
@@ -464,36 +497,38 @@ class CoattentionModel(BaseModel):
         # Allow for variation between question encoding space and document encoding space
         # Linear layer + Activation layer to project Q
         # size: (batch_size, question_size + 1, embedding_size)
-        Q = torch.tanh(self.q_proj(Q.view(-1, self.hidden_dim))).view(Q.size()) 
+        Q = torch.tanh(self.q_proj(Q.view(-1, self.hidden_dim))).view(Q.size())
 
         # 3. Calculate attention
         # Calculate similarity matrix L
         # size: (batch_size, embedding_size, document_size+1)
         D_t = torch.transpose(D, 1, 2)
         # size: (batch_size, question_size+1, document_size+1)
-        L = torch.bmm(Q, D_t) 
+        L = torch.bmm(Q, D_t)
 
         # A_Q: for each word in the question, m+1 document word attention add up to 1
-        A_Q_ = F.softmax(L, dim=1) # (B, n+1, m+1)
-        A_Q = torch.transpose(A_Q_, 1, 2) # (B, m+1, n+1)
-        C_Q = torch.bmm(D_t, A_Q) # (B, l, n+1)
+        A_Q_ = F.softmax(L, dim=1)  # (B, n+1, m+1)
+        A_Q = torch.transpose(A_Q_, 1, 2)  # (B, m+1, n+1)
+        C_Q = torch.bmm(D_t, A_Q)  # (B, l, n+1)
 
         # A_D: for each word in the document, n+1 question word attention add up to 1
         Q_t = torch.transpose(Q, 1, 2)  # (B, l, n+1)
         A_D = F.softmax(L, dim=2)  # (B, n+1, m+1)
-        C_D = torch.bmm(torch.cat((Q_t, C_Q), 1), A_D) # (B, 2l, m+1)
+        C_D = torch.bmm(torch.cat((Q_t, C_Q), 1), A_D)  # (B, 2l, m+1)
 
         C_D_t = torch.transpose(C_D, 1, 2)  # (B, m+1, 2l)
 
         # 4. Fusion BiLSTM
         # size: (batch_size, document_size+1, 3l)
         # mark: kind of transpose from original figure
-        bilstm_in = torch.cat((C_D_t, D), 2) 
+        bilstm_in = torch.cat((C_D_t, D), 2)
         bilstm_in = self.dropout(bilstm_in)
         # final embedding
         # size: (batch_size, seq_len, 2*embedding_size)
-        U = self.fusion_lstm(bilstm_in, d_mask) 
-        final_embedding = U[:,-1,:].squeeze(1)
+        U = self.fusion_lstm(bilstm_in, d_mask)
+
+        final_embedding = self.max_pooling3D(U)
+
         out = torch.sigmoid(self.output(final_embedding))
 
         return out
