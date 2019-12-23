@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 import argparse
 import pytorch_warmup as warmup
 from IPython import embed
-from model import CNNModel, RNNModel, CNNRNNModel, CoattentionModel
+from model import CNNModel, RNNModel, CNNRNNModel, CoattentionModel, BIDAF
 from dataloader import TrainDataset, TestDataset
 
 torch.set_num_threads(8)
@@ -24,6 +24,7 @@ model_name2model = {
     "RNN": RNNModel,
     "CNN": CNNModel,
     "CNNRNN": CNNRNNModel,
+    "BiDAF": BIDAF,
     "Coattention": CoattentionModel
 }
 

@@ -6,6 +6,7 @@ import random
 import numpy as np
 import torch
 import logging
+from utils import LSTM
 from tqdm import tqdm
 import torch.nn as nn
 import torch.nn.functional as F
@@ -533,3 +534,105 @@ class CoattentionModel(BaseModel):
 
         return out
 
+class BIDAF(BaseModel):
+    def __init__(self,args):
+        super(BIDAF, self).__init__(args)
+        '''
+        already declared in BaseModel:
+        self.config = args
+        self.embedding = nn.Embedding(args.word_num, args.embed_dim)
+        self.loss_func = MarginLoss(args.adv_temperature, margin=args.margin)
+        '''
+        self.context_LSTM = LSTM(
+            input_size = args.embed_dim,
+            hidden_size=args.hidden_dim,
+            num_layers=1,
+            dropout=args.dropout
+        )
+        self.att_Linear = nn.Linear(args.hidden_dim, 1)
+        self.att_Linear2 = nn.Linear(args.hidden_dim,1)
+        self.att_Linear3 = nn.Linear(args.hidden_dim,1)
+        self.model_LSTM = LSTM(
+            input_size=4 * args.hidden_dim,
+            hidden_size=args.hidden_dim,
+            num_layers=2,
+            dropout=args.dropout,
+            batch_first=True,
+            bidirectional=True
+        )
+        self.output_Linear = nn.Linear(6 * args.hidden_dim,1)
+        return
+
+    def cal_para(self):
+        size = 0
+        for para in self.parameters():
+            tmp = 1
+            for i in para.size():
+                tmp *=i
+            size+=tmp
+        print("para num = ",size)
+
+    # def weight_init(self):
+    #     for module in self.modules():
+    #         if(isinstance(module,nn.Linear)):
+    #             nn.init.constant_(module.bias)
+    #             nn.init.uniform_(module.weight,-0.1,0.1)
+    #         elif(isinstance(module,LSTM)):
+    #             nn.init.uniform_(module.lstm.all_weights,-0.1,0.1)
+    #     return
+
+    def max_pooling3D(self,input):
+        batch_size,seq_len,hidden_dim=input.shape
+        input = input.unsqueeze(-1)
+        maxpooling = nn.MaxPool3d(
+            kernel_size=[seq_len,1,1],
+            stride=[1,1,1],
+            padding=0
+        )
+        output = maxpooling(input)
+        output = output.view(batch_size,hidden_dim)
+        return output
+
+    def attention_flow(self,context,question):
+        lenc = context.shape[1]
+        lenq = question.shape[1]
+
+        S = []
+        for i in range(lenq):
+            qi = question[:,i:i+1,:]
+            #[batch_size,lenc,hidden_dim]
+            cqi = qi * context
+            cqi = self.att_Linear(cqi)
+            S.append(cqi)
+        S = torch.cat(S,dim=-1)
+        S += self.att_Linear2(context) + (self.att_Linear3(question).transpose(1,2))
+        a = F.softmax(S,dim=-1)
+        c2q = torch.bmm(a,question)
+        b = F.softmax(torch.max(S,dim=2)[0], dim=-1).unsqueeze(1)
+        q2c = torch.bmm(b,context).expand(-1,lenc,-1)
+        output = torch.cat([context,c2q,context * q2c,context * c2q],dim=-1)
+        return output
+
+
+    def forward(self,question,context,question_length,context_length):
+        # self.cal_para()
+        question = self.embedding(question)
+        context=self.embedding(context)
+
+        question = self.context_LSTM(question,question_length)
+        context = self.context_LSTM(context,context_length)
+        # print(context)
+
+        G = self.attention_flow(context,question)
+
+        M = self.model_LSTM(G,context_length)
+
+        final_embed = torch.cat([G,M],-1)
+        # final_embed = self.max_pooling3D(G)
+        final_embed = final_embed.mean(dim=1)
+
+        output = self.output_Linear(final_embed)
+
+        output = torch.sigmoid(output)
+
+        return output
